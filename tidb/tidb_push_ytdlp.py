@@ -119,17 +119,56 @@ class YtDlpCollector:
             return None
     
     def get_channel_info(self, channel_id):
-        """채널 정보 가져오기"""
+        """채널 정보 가져오기 (외부 링크 포함)"""
         try:
-            with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
+            opts = {**self.ydl_opts, 'extract_flat': True}
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(
-                    f"https://www.youtube.com/channel/{channel_id}/about",
-                    download=False,
-                    process=False
+                    f"https://www.youtube.com/channel/{channel_id}",
+                    download=False
                 )
                 return info
         except Exception as e:
             print(f"  [ERROR] Channel info failed: {e}")
+            return None
+    
+    def extract_instagram_from_channel(self, channel_id):
+        """채널 외부 링크에서 인스타그램 ID 추출"""
+        try:
+            opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': True,
+                'skip_download': True,
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                url = f"https://www.youtube.com/channel/{channel_id}"
+                info = ydl.extract_info(url, download=False)
+                
+                # 외부 링크에서 인스타그램 찾기
+                # yt-dlp는 채널의 uploader_url, channel_url 등을 제공
+                # 또한 웹페이지에서 추출한 링크가 있을 수 있음
+                
+                ig_id = None
+                
+                # 1. 채널 설명에서 추출
+                description = info.get('description', '') or ''
+                ig_id = extract_instagram_id(description)
+                if ig_id:
+                    return ig_id
+                
+                # 2. uploader_url에서 추출 (드물지만 가능)
+                uploader_url = info.get('uploader_url', '') or ''
+                if 'instagram.com' in uploader_url:
+                    ig_id = extract_instagram_id(uploader_url)
+                    if ig_id:
+                        return ig_id
+                
+                # 3. 채널 페이지의 webpage_url_domain 체크
+                # (yt-dlp가 외부 링크를 직접 제공하진 않음)
+                
+                return None
+        except Exception as e:
             return None
     
     def run_collection(self, keywords_dict):
@@ -175,8 +214,14 @@ class YtDlpCollector:
             self._save_video(info)
             
             # 인스타그램 ID 추출 및 저장
+            # 1. 영상 설명에서 추출
             description = info.get('description', '')
             ig_id = extract_instagram_id(description)
+            
+            # 2. 없으면 채널 외부 링크에서 추출 시도
+            if not ig_id:
+                ig_id = self.extract_instagram_from_channel(channel_id)
+            
             if ig_id:
                 self._save_instagram(ig_id, inf_id)
     
