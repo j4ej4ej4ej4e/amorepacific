@@ -13,3 +13,14 @@ def connect_db():
         database=os.getenv("TIDB_DATABASE"),
         ssl_verify_cert=True
     )
+
+
+HOST: gateway01.ap-northeast-1.prod.aws.tidbcloud.com
+
+PORT: 4000
+
+USERNAME: 3L6DrudtY9pp6uz.root
+
+PASSWORD: G3kCbZSpzthPGm1Q
+
+DATABASE: amore
