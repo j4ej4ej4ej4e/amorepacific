@@ -1,3 +1,10 @@
+-- 테이블 구조 확인용 쿼리
+SHOW TABLES;
+
+-- 특정 테이블(예: influencers) 구조 상세 보기
+DESCRIBE influencers;
+
+
 1. influencers (메인 부모 테이블)
 모든 인플루언서의 기본 정보를 관리합니다.
 
