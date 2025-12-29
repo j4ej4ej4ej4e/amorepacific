@@ -182,7 +182,7 @@ class InfluencerScorer:
             score += 20
             reasons.append(f"카테고리 {beauty_category_ratio*100:.0f}%")
         else:
-            score -= 50
+            score -= 70
             reasons.append("도메인 불일치")
         
         # ===== 인스타그램 가점 =====
@@ -223,6 +223,11 @@ class InfluencerScorer:
         print("=" * 70)
         print(" 인플루언서 점수 분석 (유튜브 기준 + 인스타 가점)")
         print("=" * 70)
+        
+        # [점수 초기화] 계산 시작 전 모든 점수를 0으로 리셋 (과거 점수 잔존 방지)
+        print("[초기화] 기존 confidence_score를 모두 0으로 초기화합니다...")
+        self.cursor.execute("UPDATE influencers SET confidence_score = 0")
+        print("✅ 초기화 완료. 점수 재계산 중...")
         
         # 유튜브 채널 + 최근 영상 통계 + Topic + 카테고리 + 인스타 조회
         data = self.query("""
