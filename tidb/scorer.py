@@ -86,7 +86,7 @@ class InfluencerScorer:
         description = channel_data.get('description', '') or ''
         title = channel_data.get('title', '') or ''
         avg_views = channel_data.get('avg_views', 0) or 0
-        avg_likes = channel_data.get('avg_likes', 0) or 0
+        total_view_count = channel_data.get('total_view_count', 0) or 0
         video_count = channel_data.get('video_count', 0) or 0
         
         # 1. 구독자 수 (0~30점) - log 스케일
@@ -109,15 +109,14 @@ class InfluencerScorer:
             elif view_rate > 5:
                 score += 5
         
-        # 3. 인게이지먼트 (0~15점)
-        if avg_views > 0 and avg_likes > 0:
-            eng_rate = (avg_likes / avg_views) * 100
-            if eng_rate > 5:
+        # 3. 총 조회수 규모 (0~15점)
+        if total_view_count > 0:
+            if total_view_count > 100000000:  # 1억 이상
                 score += 15
-                reasons.append(f"인게이지먼트 {eng_rate:.1f}%")
-            elif eng_rate > 3:
+                reasons.append(f"총조회 {total_view_count//1000000}M")
+            elif total_view_count > 10000000:  # 1천만 이상
                 score += 10
-            elif eng_rate > 1:
+            elif total_view_count > 1000000:  # 100만 이상
                 score += 5
         
         # 4. 영상 개수 (0~10점)
@@ -131,18 +130,59 @@ class InfluencerScorer:
         elif video_count >= 3:
             score += 3
         
-        # 5. 뷰티/헤어 도메인 (+20 / -30)
-        is_beauty = is_beauty_related(description) or is_beauty_related(title)
+        # 5. 최근 활동성 (0~15점)
+        recent_count = channel_data.get('recent_count', 0) or 0
+        days_since_last = channel_data.get('days_since_last', 999) or 999
+        avg_recent_views = channel_data.get('avg_recent_views', 0) or 0
+        
+        # 최근 90일 내 영상 있으면 가점
+        if recent_count > 0:
+            if days_since_last <= 7:  # 7일 이내
+                score += 10
+                reasons.append("최근활동")
+            elif days_since_last <= 30:  # 30일 이내
+                score += 7
+            elif days_since_last <= 90:  # 90일 이내
+                score += 3
+            
+            # 최근 영상 평균 조회수 가점
+            if avg_recent_views > 100000:
+                score += 5
+                reasons.append(f"최근조회 {int(avg_recent_views):,}")
+            elif avg_recent_views > 10000:
+                score += 3
+        
+        # 6. 도메인 판단 (채널 Topic + 영상 카테고리 조합)
+        topic_categories = channel_data.get('topic_categories', '') or ''
+        beauty_category_ratio = channel_data.get('beauty_category_ratio', 0) or 0
         is_doctor = is_excluded(description) or is_excluded(title)
+        
+        # 뷰티 관련 Topic 키워드
+        beauty_topics = ['beauty', 'fashion', 'hairstyle', 'cosmetics', 'lifestyle']
+        has_beauty_topic = any(bt in topic_categories.lower() for bt in beauty_topics)
+        
+        # 영상 카테고리 22/26 비율 50% 이상
+        has_beauty_category = beauty_category_ratio >= 0.5
         
         if is_doctor:
             score -= 50
             reasons.append("의사/병원 제외")
-        elif is_beauty:
+        elif has_beauty_topic and has_beauty_category:
+            # Topic + 카테고리 둘 다 만족
+            score += 35
+            topic_name = topic_categories.split(',')[0][:10] if topic_categories else ''
+            reasons.append(f"Topic+카테:{topic_name}")
+        elif has_beauty_topic:
+            # Topic만 만족
+            score += 25
+            topic_name = topic_categories.split(',')[0][:12] if topic_categories else ''
+            reasons.append(f"Topic:{topic_name}")
+        elif has_beauty_category:
+            # 카테고리만 만족
             score += 20
-            reasons.append("뷰티/헤어")
+            reasons.append(f"카테고리 {beauty_category_ratio*100:.0f}%")
         else:
-            score -= 30
+            score -= 50
             reasons.append("도메인 불일치")
         
         # ===== 인스타그램 가점 =====
@@ -173,7 +213,7 @@ class InfluencerScorer:
             
             # 비공개 감점
             if is_private:
-                score -= 10
+                score -= 50
                 reasons.append("인스타 비공개")
         
         return max(0, score), reasons
@@ -184,24 +224,49 @@ class InfluencerScorer:
         print(" 인플루언서 점수 분석 (유튜브 기준 + 인스타 가점)")
         print("=" * 70)
         
-        # 유튜브 채널 + 영상 통계 + 인스타 조회
+        # 유튜브 채널 + 최근 영상 통계 + Topic + 카테고리 + 인스타 조회
         data = self.query("""
             SELECT 
                 i.influencer_id, i.name,
                 c.channel_id, c.subscriber_count, c.title, c.description,
-                AVG(vs.view_count) as avg_views,
-                AVG(vs.like_count) as avg_likes,
-                COUNT(DISTINCT v.video_id) as video_count,
+                c.video_count,
+                c.total_view_count,
+                c.topic_categories,
+                recent.recent_count,
+                recent.days_since_last,
+                recent.avg_recent_views,
+                cat.beauty_category_ratio,
                 MAX(ig.ig_username) as ig_username, 
                 MAX(ig.follower_count) as ig_followers,
                 MAX(ig.following_count) as ig_following, 
                 MAX(ig.is_private) as is_private
             FROM influencers i
             JOIN yt_channels c ON i.influencer_id = c.influencer_id
-            LEFT JOIN yt_videos v ON c.channel_id = v.channel_id
-            LEFT JOIN yt_video_stats vs ON v.video_id = vs.video_id
+            LEFT JOIN (
+                SELECT 
+                    v.channel_id,
+                    COUNT(*) as recent_count,
+                    DATEDIFF(NOW(), MAX(v.published_at)) as days_since_last,
+                    AVG(vs.view_count) as avg_recent_views
+                FROM yt_videos v
+                LEFT JOIN yt_video_stats vs ON v.video_id = vs.video_id
+                WHERE v.published_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+                GROUP BY v.channel_id
+            ) recent ON c.channel_id = recent.channel_id
+            LEFT JOIN (
+                SELECT 
+                    channel_id,
+                    SUM(CASE WHEN category_id IN (22, 26) THEN 1 ELSE 0 END) / COUNT(*) as beauty_category_ratio
+                FROM yt_videos
+                WHERE category_id IS NOT NULL
+                GROUP BY channel_id
+            ) cat ON c.channel_id = cat.channel_id
             LEFT JOIN ig_accounts ig ON i.influencer_id = ig.influencer_id
-            GROUP BY i.influencer_id, i.name, c.channel_id, c.subscriber_count, c.title, c.description
+            GROUP BY i.influencer_id, i.name, c.channel_id, c.subscriber_count, 
+                     c.title, c.description, c.video_count, c.total_view_count,
+                     c.topic_categories,
+                     recent.recent_count, recent.days_since_last, recent.avg_recent_views,
+                     cat.beauty_category_ratio
             ORDER BY c.subscriber_count DESC
         """)
         
@@ -216,13 +281,22 @@ class InfluencerScorer:
             if idx % 50 == 0:
                 print(f"  진행: {idx}/{total}")
             
+            video_count = int(row['video_count'] or 0)
+            total_views = int(row['total_view_count'] or 0)
+            avg_views = total_views / video_count if video_count > 0 else 0
+            
             channel_data = {
                 'subscriber_count': row['subscriber_count'],
                 'title': row['title'],
                 'description': row['description'],
-                'avg_views': float(row['avg_views'] or 0),
-                'avg_likes': float(row['avg_likes'] or 0),
-                'video_count': int(row['video_count'] or 0)
+                'avg_views': avg_views,
+                'total_view_count': total_views,
+                'video_count': video_count,
+                'recent_count': int(row['recent_count'] or 0),
+                'days_since_last': int(row['days_since_last'] or 999),
+                'avg_recent_views': float(row['avg_recent_views'] or 0),
+                'topic_categories': row['topic_categories'] or '',
+                'beauty_category_ratio': float(row['beauty_category_ratio'] or 0)
             }
             
             ig_data = None

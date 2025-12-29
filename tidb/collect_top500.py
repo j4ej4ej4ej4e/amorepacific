@@ -187,10 +187,12 @@ class CategoryCollector:
         title = info.get('channel') or info.get('uploader')
         description = (info.get('description', '') or '')[:1000]
         subscriber_count = info.get('channel_follower_count', 0) or 0
+        # yt-dlp에서 직접 가져올 수 없는 값들 (API로 별도 업데이트 필요)
+        # video_count, total_view_count는 0으로 초기화 후 update_channel_stats.py로 채움
         
         self.cursor.execute("""
-            INSERT INTO yt_channels (channel_id, influencer_id, title, description, subscriber_count)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO yt_channels (channel_id, influencer_id, title, description, subscriber_count, video_count, total_view_count)
+            VALUES (%s, %s, %s, %s, %s, 0, 0)
             ON DUPLICATE KEY UPDATE 
                 subscriber_count = VALUES(subscriber_count),
                 description = VALUES(description)
@@ -205,13 +207,23 @@ class CategoryCollector:
         tags = ','.join(info.get('tags', [])[:10]) if info.get('tags') else None
         duration = info.get('duration_string') or str(info.get('duration', 0))
         
+        # published_at 처리 (yt-dlp: upload_date = YYYYMMDD)
+        upload_date = info.get('upload_date')  # 예: '20241225'
+        published_at = None
+        if upload_date and len(upload_date) == 8:
+            published_at = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]} 00:00:00"
+        
+        # category_id 처리 (yt-dlp에서 직접 제공 안 함, API로 별도 업데이트 필요)
+        # update_video_category.py 실행으로 채움
+        
         self.cursor.execute("""
-            INSERT INTO yt_videos (video_id, channel_id, title, description, tags, duration)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO yt_videos (video_id, channel_id, title, description, tags, duration, published_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE 
                 tags = VALUES(tags),
-                duration = VALUES(duration)
-        """, (video_id, channel_id, title, description, tags, duration))
+                duration = VALUES(duration),
+                published_at = COALESCE(VALUES(published_at), published_at)
+        """, (video_id, channel_id, title, description, tags, duration, published_at))
         
         # 영상 통계 저장
         view_count = info.get('view_count', 0) or 0
