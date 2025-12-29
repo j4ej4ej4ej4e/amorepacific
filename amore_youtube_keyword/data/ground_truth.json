@@ -306,5 +306,26 @@
     "similarity": 0.2258884608745575,
     "note": "초기 데이터 (비관련)",
     "timestamp": "2025-12-27T00:00:00"
+  },
+  {
+    "keyword": "다이슨 에어랩 후기",
+    "is_hair_related": true,
+    "similarity": 0.34439289569854736,
+    "note": "",
+    "timestamp": "2025-12-29T21:39:55.620172"
+  },
+  {
+    "keyword": "비교",
+    "is_hair_related": false,
+    "similarity": 0.36471256613731384,
+    "note": "",
+    "timestamp": "2025-12-29T21:39:59.288045"
+  },
+  {
+    "keyword": "방법",
+    "is_hair_related": false,
+    "similarity": 0.3684941828250885,
+    "note": "",
+    "timestamp": "2025-12-29T21:40:00.773878"
   }
 ]

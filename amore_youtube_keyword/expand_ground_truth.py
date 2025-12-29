@@ -94,8 +94,20 @@ class InteractiveLabelingTool:
             print(f"❌ 파일 없음: {file_path}")
             return []
         
+        keywords = []
         with open(path, 'r', encoding='utf-8') as f:
-            keywords = [line.strip() for line in f if line.strip()]
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                # 헤더/주석 스킵
+                if line.startswith("#"):
+                    continue
+                # 탭 구분일 경우 첫 컬럼만 사용
+                if "\t" in line:
+                    line = line.split("\t", 1)[0]
+                if line:
+                    keywords.append(line)
         
         # 이미 라벨링된 것 제외
         existing = set(self.manager.get_keywords())
@@ -287,6 +299,18 @@ class ProgressiveOptimizer:
             json.dump(result_data, f, indent=2, ensure_ascii=False)
         
         print(f"\n💾 결과 저장: {result_path}")
+        
+        # 최신 임계값 파일로도 기록해 파이프라인에서 바로 사용
+        latest_path = Path('data/latest_threshold.json')
+        latest_payload = {
+            'timestamp': timestamp,
+            'optimal_threshold': optimal_threshold,
+            'metrics': best_result,
+            'roc_auc': roc_auc,
+        }
+        with open(latest_path, 'w', encoding='utf-8') as f:
+            json.dump(latest_payload, f, indent=2, ensure_ascii=False)
+        print(f"   최신 임계값 갱신: {latest_path}")
         
         return optimal_threshold, best_result
     

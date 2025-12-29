@@ -7,6 +7,7 @@ from typing import List, Dict, Set, Tuple, Optional
 from collections import Counter
 from dataclasses import dataclass
 import re
+from pathlib import Path
 
 # konlpy 임포트 (설치 필요)
 try:
@@ -15,6 +16,21 @@ try:
 except ImportError:
     KONLPY_AVAILABLE = False
     print("[경고] konlpy가 설치되지 않았습니다. pip install konlpy 실행 필요.")
+
+# Kiwi 형태소 분석기 (신조어에 강함)
+try:
+    from kiwipiepy import Kiwi
+    KIWIPIE_AVAILABLE = True
+except ImportError:
+    KIWIPIE_AVAILABLE = False
+    print("[경고] kiwipiepy가 설치되지 않았습니다. pip install kiwipiepy 실행 필요.")
+
+# soynlp (신조어 후보 발굴용, 선택)
+try:
+    from soynlp.noun import LRNounExtractor_v2
+    SOYNLP_AVAILABLE = True
+except ImportError:
+    SOYNLP_AVAILABLE = False
 
 # 임베딩 기반 헤어 관련성 체커 (선택적)
 try:
@@ -89,7 +105,13 @@ class KeywordMiner:
                  hair_keywords: Set[str] = None,
                  stopwords: Set[str] = None,
                  use_embedding: bool = True,
-                 embedding_threshold: float = 0.35):
+                 embedding_threshold: float = 0.35,
+                 use_kiwi: bool = True,
+                 user_dict_path: Optional[str] = None,
+                 additional_user_words: Optional[List[str]] = None,
+                 use_soynlp_candidates: bool = False,
+                 soynlp_min_score: float = 0.3,
+                 soynlp_min_freq: int = 2):
         """
         Args:
             n_range: N-gram 범위 (최소, 최대)
@@ -98,6 +120,12 @@ class KeywordMiner:
             stopwords: 불용어 셋
             use_embedding: 임베딩 기반 판단 사용 여부 (기본 True)
             embedding_threshold: 임베딩 유사도 임계값
+            use_kiwi: Kiwi 형태소 분석 사용 여부 (기본 True, 실패 시 Okt 폴백)
+            user_dict_path: Kiwi 사용자 사전 파일 경로 (단어별 한 줄)
+            additional_user_words: 코드에서 바로 넣을 사용자 단어 리스트
+            use_soynlp_candidates: soynlp로 신조어 후보를 추가할지 여부
+            soynlp_min_score: soynlp 후보 최소 점수
+            soynlp_min_freq: soynlp 후보 최소 빈도
         """
         self.n_range = n_range
         self.min_frequency = min_frequency
@@ -105,12 +133,38 @@ class KeywordMiner:
         self.stopwords = stopwords or STOPWORDS
         self.use_embedding = use_embedding
         self.embedding_threshold = embedding_threshold
+        self.use_kiwi = use_kiwi and KIWIPIE_AVAILABLE
+        self.user_dict_path = user_dict_path
+        self.user_words = set(additional_user_words or [])
+        self.use_soynlp_candidates = use_soynlp_candidates and SOYNLP_AVAILABLE
+        self.soynlp_min_score = soynlp_min_score
+        self.soynlp_min_freq = soynlp_min_freq
         
-        # 형태소 분석기 초기화
-        if KONLPY_AVAILABLE:
+        # 형태소 분석기 초기화 (Kiwi 우선, 실패 시 Okt)
+        self.kiwi = None
+        self.okt = None
+        if self.use_kiwi:
+            try:
+                self.kiwi = Kiwi()
+                self._load_user_dict(self.user_dict_path)
+                for word in self.user_words:
+                    # 명사 태그로 추가 (신조어/도메인어)
+                    self.kiwi.add_user_word(word, tag='NNG')
+                if self.user_words:
+                    print(f"[KeywordMiner] ✅ Kiwi 사용자 사전 등록: {len(self.user_words)}개")
+            except Exception as e:
+                print(f"[KeywordMiner] ⚠️ Kiwi 초기화 실패, Okt로 폴백: {e}")
+                self.kiwi = None
+                self.use_kiwi = False
+        
+        if self.kiwi is None and KONLPY_AVAILABLE:
             self.okt = Okt()
-        else:
-            self.okt = None
+        elif self.kiwi is None and not KONLPY_AVAILABLE:
+            print("[KeywordMiner] ⚠️ 형태소 분석기를 찾을 수 없습니다. raw 패턴만 사용합니다.")
+
+        if self.use_soynlp_candidates and not SOYNLP_AVAILABLE:
+            print("[KeywordMiner] ⚠️ soynlp가 없어 신조어 후보 추가를 비활성화합니다.")
+            self.use_soynlp_candidates = False
         
         # 임베딩 체커 초기화
         self.hair_checker = None
@@ -122,6 +176,25 @@ class KeywordMiner:
             except Exception as e:
                 print(f"[KeywordMiner] ⚠️ 임베딩 로드 실패, 키워드 매칭으로 대체: {e}")
                 self.use_embedding = False
+
+    def _load_user_dict(self, path: Optional[str]):
+        """Kiwi 사용자 사전 파일 로드 (한 줄 한 단어)"""
+        if not path:
+            return
+        p = Path(path)
+        if not p.exists():
+            print(f"[KeywordMiner] ⚠️ 사용자 사전 파일을 찾을 수 없습니다: {path}")
+            return
+        try:
+            words = [line.strip() for line in p.read_text(encoding='utf-8').splitlines() if line.strip()]
+            for word in words:
+                self.user_words.add(word)
+            if self.kiwi:
+                for word in words:
+                    self.kiwi.add_user_word(word, tag='NNG')
+            print(f"[KeywordMiner] ✅ 사용자 사전 로드: {len(words)}개")
+        except Exception as e:
+            print(f"[KeywordMiner] ⚠️ 사용자 사전 로드 실패 ({path}): {e}")
     
     def extract_from_texts(self, texts: List[str]) -> Dict[str, ExtractedKeyword]:
         """
@@ -137,12 +210,16 @@ class KeywordMiner:
         Returns:
             {키워드: ExtractedKeyword} 딕셔너리
         """
-        if not KONLPY_AVAILABLE:
-            print("[오류] konlpy가 설치되지 않아 키워드 추출이 불가능합니다.")
-            return {}
-        
         all_ngrams = Counter()
         source_counts = Counter()
+        soynlp_candidates: List[str] = []
+
+        # soynlp로 신조어 후보 선반영 (선택 사항)
+        if self.use_soynlp_candidates and SOYNLP_AVAILABLE:
+            soynlp_candidates = self._extract_soynlp_candidates(texts)
+            for cand in soynlp_candidates:
+                all_ngrams[cand] += 1
+                source_counts[cand] += 1
         
         for text in texts:
             if not text:
@@ -182,6 +259,38 @@ class KeywordMiner:
         
         return results
     
+    def _extract_soynlp_candidates(self, texts: List[str]) -> List[str]:
+        """soynlp로 신조어/도메인어 후보 추출 (선택적)"""
+        if not SOYNLP_AVAILABLE:
+            return []
+        
+        try:
+            extractor = LRNounExtractor_v2(verbose=False)
+            scores = extractor.train_extract(texts)
+        except Exception as e:
+            print(f"[KeywordMiner] ⚠️ soynlp 후보 추출 실패: {e}")
+            return []
+        
+        candidates = set()
+        for word, score_obj in scores.items():
+            try:
+                score_val = float(score_obj)
+            except Exception:
+                score_val = float(getattr(score_obj, 'score', getattr(score_obj, 'confidence', 0.0)) or 0.0)
+            freq = getattr(score_obj, 'frequency', getattr(score_obj, 'freq', 0))
+            
+            if len(word) < 2:
+                continue
+            if freq and freq < self.soynlp_min_freq:
+                continue
+            if score_val < self.soynlp_min_score:
+                continue
+            candidates.add(word)
+        
+        if candidates:
+            print(f"[KeywordMiner] ✅ soynlp 후보 {len(candidates)}개 선반영")
+        return list(candidates)
+    
     def _extract_raw_patterns(self, text: str) -> List[str]:
         """
         원본 텍스트에서 직접 한글 복합어 패턴 추출
@@ -213,6 +322,7 @@ class KeywordMiner:
         
         # 중복 제거 및 불용어 필터링
         filtered = []
+        seen = set()
         for pattern in patterns:
             # 불용어 제외
             if pattern in self.stopwords:
@@ -220,7 +330,16 @@ class KeywordMiner:
             # 너무 짧은 것 제외 (1글자)
             if len(pattern) < 2:
                 continue
+            if pattern in seen:
+                continue
             filtered.append(pattern)
+            seen.add(pattern)
+        
+        # 사용자 사전에 등록된 도메인어가 원문에 포함되면 우선 추가
+        for word in self.user_words:
+            if word in cleaned and word not in seen:
+                filtered.append(word)
+                seen.add(word)
         
         return filtered
 
@@ -270,27 +389,50 @@ class KeywordMiner:
         형태소 분석 및 토큰화
         명사, 형용사, 동사 어근 추출
         """
-        if not self.okt:
-            return text.split()
+        if self.kiwi:
+            tokens = self._tokenize_with_kiwi(text)
+            if tokens:
+                return tokens
         
+        if self.okt:
+            return self._tokenize_with_okt(text)
+        
+        # 최후 폴백: 단순 공백 토크나이즈 + 필터
+        return [
+            token for token in text.split()
+            if len(token) >= 2 and token not in self.stopwords
+        ]
+
+    def _tokenize_with_okt(self, text: str) -> List[str]:
+        """Okt 기반 토크나이즈 (폴백)"""
         tokens = []
-        
-        # 형태소 분석
         pos_tags = self.okt.pos(text, norm=True, stem=True)
         
         for word, pos in pos_tags:
-            # 불용어 제외
             if word in self.stopwords:
                 continue
-            
-            # 1글자 제외 (의미있는 단어만)
             if len(word) < 2:
                 continue
-            
-            # 명사, 형용사, 동사, 외국어만 추출
             if pos in ['Noun', 'Adjective', 'Verb', 'Alpha']:
                 tokens.append(word)
-        
+        return tokens
+
+    def _tokenize_with_kiwi(self, text: str) -> List[str]:
+        """Kiwi 기반 토크나이즈 (신조어/사용자 사전 우선)"""
+        tokens = []
+        try:
+            for token in self.kiwi.tokenize(text, normalize_coda=True):
+                word = token.form
+                if word in self.stopwords:
+                    continue
+                if len(word) < 2:
+                    continue
+                if token.tag in ('NNG', 'NNP', 'VA', 'VV', 'XR', 'SL'):
+                    tokens.append(word)
+        except Exception as e:
+            print(f"[KeywordMiner] ⚠️ Kiwi 토크나이즈 실패, Okt로 폴백: {e}")
+            if self.okt:
+                return self._tokenize_with_okt(text)
         return tokens
     
     def _generate_ngrams(self, tokens: List[str]) -> List[str]:
