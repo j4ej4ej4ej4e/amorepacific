@@ -127,6 +127,10 @@ class KeywordMiner:
         """
         텍스트 리스트에서 키워드 추출
         
+        하이브리드 방식:
+        1. 형태소 분석 기반 N-gram
+        2. 원본 텍스트 패턴 매칭 (신조어/복합어 보존)
+        
         Args:
             texts: 분석할 텍스트 리스트
             
@@ -138,30 +142,30 @@ class KeywordMiner:
             return {}
         
         all_ngrams = Counter()
-        source_counts = Counter()  # 각 키워드가 몇 개 소스에서 나왔는지
+        source_counts = Counter()
         
         for text in texts:
             if not text:
                 continue
             
-            # 1. 텍스트 전처리
+            # 1. 원본 텍스트에서 직접 패턴 추출 (신조어 보존)
+            raw_patterns = self._extract_raw_patterns(text)
+            for pattern in raw_patterns:
+                all_ngrams[pattern] += 1
+            for pattern in set(raw_patterns):
+                source_counts[pattern] += 1
+            
+            # 2. 형태소 분석 기반 N-gram (기존 방식)
             cleaned_text = self._preprocess(text)
-            
-            # 2. 형태소 분석
             tokens = self._tokenize(cleaned_text)
-            
-            # 3. N-gram 생성
             text_ngrams = self._generate_ngrams(tokens)
             
-            # 빈도 카운트
             for ngram in text_ngrams:
                 all_ngrams[ngram] += 1
-            
-            # 소스 카운트 (중복 제거)
             for ngram in set(text_ngrams):
                 source_counts[ngram] += 1
         
-        # 4. 결과 구성
+        # 3. 결과 구성
         results = {}
         for ngram, freq in all_ngrams.items():
             if freq < self.min_frequency:
@@ -177,6 +181,49 @@ class KeywordMiner:
             )
         
         return results
+    
+    def _extract_raw_patterns(self, text: str) -> List[str]:
+        """
+        원본 텍스트에서 직접 한글 복합어 패턴 추출
+        
+        신조어나 복합어 보존:
+        - "아이롱펌" → ["아이롱펌"] (원본 보존)
+        - "볼륨펌" → ["볼륨펌"]
+        - "허쉬컷" → ["허쉬컷"]
+        
+        Returns:
+            복합어 패턴 리스트
+        """
+        patterns = []
+        
+        # 전처리
+        cleaned = self._preprocess(text)
+        
+        # 한글 복합어 패턴 (2~8글자)
+        # 패턴: 한글만, 또는 한글+영문 조합
+        import re
+        
+        # 패턴 1: 순수 한글 단어 (2~8자)
+        korean_words = re.findall(r'[가-힣]{2,8}', cleaned)
+        patterns.extend(korean_words)
+        
+        # 패턴 2: 한글+영문 조합 (예: "S컬펌")
+        mixed_words = re.findall(r'[가-힣a-zA-Z]{2,10}', cleaned)
+        patterns.extend(mixed_words)
+        
+        # 중복 제거 및 불용어 필터링
+        filtered = []
+        for pattern in patterns:
+            # 불용어 제외
+            if pattern in self.stopwords:
+                continue
+            # 너무 짧은 것 제외 (1글자)
+            if len(pattern) < 2:
+                continue
+            filtered.append(pattern)
+        
+        return filtered
+
     
     def extract_hair_keywords(self, texts: List[str], 
                                top_k: int = 50) -> List[ExtractedKeyword]:

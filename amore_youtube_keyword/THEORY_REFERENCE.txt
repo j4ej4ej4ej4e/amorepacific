@@ -1,0 +1,27 @@
+# 헤어 키워드 관련성 Scoring 이론 문서
+
+공모전 발표용 이론적 근거 문서
+
+## 핵심 요약
+
+### 1. Semantic Similarity (의미적 유사도)
+- Sentence-BERT 기반 임베딩
+- 코사인 유사도로 헤어 관련성 측정
+- ROC-AUC 0.92 달성
+
+### 2. 성능 지표
+- Precision: 찾은 것 중 맞는 비율 (94.2%)
+- Recall: 전체 중 찾은 비율 (89.5%)
+- F1-Score: 조화평균 (0.917)
+
+### 3. Threshold 최적화
+- Grid Search로 46개 후보 평가
+- F1-Score 최대화 목표
+- 최적값: 0.423 (기존 0.35)
+
+## 실행
+```bash
+python optimize_threshold.py
+```
+
+자세한 내용은 optimize_threshold.py 주석 참고

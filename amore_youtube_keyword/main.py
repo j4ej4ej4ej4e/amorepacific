@@ -14,7 +14,6 @@ import os
 from datetime import datetime
 
 from keyword_engine import (
-    SeedKeywordGenerator,
     KeywordTreeExpander,
     DEFAULT_SEED_KEYWORDS,
 )
@@ -66,19 +65,6 @@ def main():
         help='출력 최소화'
     )
     
-    parser.add_argument(
-        '--generate-seeds',
-        action='store_true',
-        help='템플릿 기반 시드 키워드 자동 생성'
-    )
-    
-    parser.add_argument(
-        '--seed-count',
-        type=int,
-        default=30,
-        help='자동 생성할 시드 키워드 수 (기본: 30)'
-    )
-    
     args = parser.parse_args()
     
     # 출력 디렉토리 생성
@@ -97,12 +83,6 @@ def main():
         seed_keywords = [s.strip() for s in args.seeds.split(',')]
         if not args.quiet:
             print(f"\n📌 커스텀 시드 키워드: {len(seed_keywords)}개")
-    elif args.generate_seeds:
-        # 템플릿 기반 자동 생성
-        generator = SeedKeywordGenerator()
-        seed_keywords = generator.generate_random(args.seed_count)
-        if not args.quiet:
-            print(f"\n📌 자동 생성 시드 키워드: {len(seed_keywords)}개")
     else:
         # 기본 시드 사용
         seed_keywords = DEFAULT_SEED_KEYWORDS

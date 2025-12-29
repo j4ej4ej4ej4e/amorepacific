@@ -9,7 +9,7 @@ import json
 import os
 from datetime import datetime
 
-from .seed_keywords import SeedKeywordGenerator, DEFAULT_SEED_KEYWORDS
+from .seed_keywords import DEFAULT_SEED_KEYWORDS
 from .youtube_searcher import YouTubeSearcher, VideoMeta
 from .keyword_miner import KeywordMiner, ExtractedKeyword
 from .query_scorer import QueryScorer, QueryScore
@@ -64,7 +64,7 @@ class KeywordTreeExpander:
                  searcher: YouTubeSearcher = None,
                  miner: KeywordMiner = None,
                  scorer: QueryScorer = None,
-                 max_depth: int = 5,
+                 max_depth: int = 3,
                  top_k_per_level: int = 10,
                  videos_per_search: int = 20,
                  detail_videos: int = 5,

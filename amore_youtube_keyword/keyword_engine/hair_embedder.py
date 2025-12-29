@@ -54,7 +54,7 @@ class HairRelevanceChecker:
     
     def __init__(self, 
                  model_name: str = 'jhgan/ko-sbert-nli',
-                 threshold: float = 0.35,
+                 threshold: float = 0.52,
                  use_fallback: bool = True):
         """
         Args:

@@ -10,17 +10,14 @@ print("🧪 키워드 파이프라인 테스트")
 print("=" * 60)
 
 # 1. Seed 키워드 테스트
-print("\n[1/5] 📌 Seed 키워드 생성 테스트")
+print("\n[1/5] 📌 Seed 키워드 테스트")
 print("-" * 40)
 try:
-    from keyword_engine.seed_keywords import SeedKeywordGenerator, DEFAULT_SEED_KEYWORDS
-    
-    generator = SeedKeywordGenerator()
-    sample_seeds = generator.generate_by_category("hair_care", limit=5)
+    from keyword_engine.seed_keywords import DEFAULT_SEED_KEYWORDS
     
     print(f"✅ 성공! 기본 시드 {len(DEFAULT_SEED_KEYWORDS)}개 로드됨")
-    print(f"   생성된 예시 (hair_care):")
-    for kw in sample_seeds[:3]:
+    print(f"   시드 예시:")
+    for kw in DEFAULT_SEED_KEYWORDS[:3]:
         print(f"     - {kw}")
 except Exception as e:
     print(f"❌ 실패: {e}")
