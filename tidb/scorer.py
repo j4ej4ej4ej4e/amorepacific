@@ -225,8 +225,9 @@ class InfluencerScorer:
         print("=" * 70)
         
         # [점수 초기화] 계산 시작 전 모든 점수를 0으로 리셋 (과거 점수 잔존 방지)
-        print("[초기화] 기존 confidence_score를 모두 0으로 초기화합니다...")
+        print("[초기화] 기존 점수(confidence_score, bot_score)를 모두 0으로 초기화합니다...")
         self.cursor.execute("UPDATE influencers SET confidence_score = 0")
+        self.cursor.execute("UPDATE analysis_results SET bot_score = 0")
         print("✅ 초기화 완료. 점수 재계산 중...")
         
         # 유튜브 채널 + 최근 영상 통계 + Topic + 카테고리 + 인스타 조회
@@ -240,6 +241,8 @@ class InfluencerScorer:
                 recent.recent_count,
                 recent.days_since_last,
                 recent.avg_recent_views,
+                recent.avg_recent_likes,
+                recent.avg_recent_comments,
                 cat.beauty_category_ratio,
                 MAX(ig.ig_username) as ig_username, 
                 MAX(ig.follower_count) as ig_followers,
@@ -252,7 +255,9 @@ class InfluencerScorer:
                     v.channel_id,
                     COUNT(*) as recent_count,
                     DATEDIFF(NOW(), MAX(v.published_at)) as days_since_last,
-                    AVG(vs.view_count) as avg_recent_views
+                    AVG(vs.view_count) as avg_recent_views,
+                    AVG(vs.like_count) as avg_recent_likes,
+                    AVG(vs.comment_count) as avg_recent_comments
                 FROM yt_videos v
                 LEFT JOIN yt_video_stats vs ON v.video_id = vs.video_id
                 WHERE v.published_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
@@ -270,7 +275,7 @@ class InfluencerScorer:
             GROUP BY i.influencer_id, i.name, c.channel_id, c.subscriber_count, 
                      c.title, c.description, c.video_count, c.total_view_count,
                      c.topic_categories,
-                     recent.recent_count, recent.days_since_last, recent.avg_recent_views,
+                     recent.recent_count, recent.days_since_last, recent.avg_recent_views, recent.avg_recent_likes, recent.avg_recent_comments,
                      cat.beauty_category_ratio
             ORDER BY c.subscriber_count DESC
         """)
@@ -300,6 +305,8 @@ class InfluencerScorer:
                 'recent_count': int(row['recent_count'] or 0),
                 'days_since_last': int(row['days_since_last'] or 999),
                 'avg_recent_views': float(row['avg_recent_views'] or 0),
+                'avg_recent_likes': float(row['avg_recent_likes'] or 0),
+                'avg_recent_comments': float(row['avg_recent_comments'] or 0),
                 'topic_categories': row['topic_categories'] or '',
                 'beauty_category_ratio': float(row['beauty_category_ratio'] or 0)
             }
@@ -314,7 +321,52 @@ class InfluencerScorer:
                 }
             
             score, reasons = self.calculate_score(channel_data, ig_data)
+
+            # [봇 패턴 감지]
+            bot_score = 0
             
+            # 1. Engagement Mismatch (조회수 높지만 반응 저조)
+            # 조건: 최근 평균 조회수 > 1000 AND (좋아요+댓글)/조회수 < 0.1%
+            # 예외: 좋아요가 0이면(숨김 설정) 판단하지 않음 (건너뜀)
+            if channel_data['avg_recent_views'] > 1000:
+                likes = channel_data['avg_recent_likes']
+                comments = channel_data['avg_recent_comments']
+                views = channel_data['avg_recent_views']
+                
+                # 좋아요가 0이면(숨김) 무조건 PASS
+                if likes > 0:
+                    engagement = likes + comments
+                    if engagement / views < 0.001:
+                        bot_score += 50
+                        reasons.append("봇의심:반응저조")
+
+            # 2. Silent Viewers (유령 구독자)
+            # 조건: 구독자 > 10,000 AND 조회수/구독자 < 0.5% (기존 1%에서 완화)
+            # 예외: avg_recent_views가 0이면(수집된 최근 영상 없음) 판단하지 않음
+            sub_count = channel_data['subscriber_count'] or 0
+            avg_views = channel_data['avg_recent_views']
+            
+            if avg_views > 0 and sub_count > 10000:
+                if avg_views / sub_count < 0.005:
+                    bot_score += 30
+                    reasons.append("봇의심:유령구독자")
+
+            # 3. Content Factory (공장형 업로드)
+            if channel_data['recent_count'] > 300:
+                bot_score += 20
+                reasons.append("봇의심:공장형")
+            
+            # bot_score 저장 (analysis_results 테이블)
+            if bot_score > 0:
+                try:
+                   self.cursor.execute("""
+                       INSERT INTO analysis_results (influencer_id, bot_score) 
+                       VALUES (%s, %s)
+                       ON DUPLICATE KEY UPDATE bot_score = VALUES(bot_score)
+                   """, (row['influencer_id'], bot_score))
+                except Exception as e:
+                    pass # 이미 존재하는 등 에러 무시
+
             if "뷰티/헤어" in reasons:
                 beauty_count += 1
             
