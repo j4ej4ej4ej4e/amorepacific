@@ -53,6 +53,7 @@ DB_SCHEMA = """
    - subscriber_count (INT): 구독자 수
    - video_count (INT): 동영상 수
    - total_view_count (BIGINT): 총 조회수
+   - thumbnail_url (VARCHAR): 채널 프로필 이미지 URL
    - topic_categories (TEXT): 채널 주제 카테고리 (예: Beauty, Lifestyle)
 
 3. yt_videos (유튜브 동영상 정보)
@@ -79,7 +80,17 @@ DB_SCHEMA = """
 
 def generate_sql(user_query):
     """LLM을 사용하여 자연어를 SQL로 변환"""
-    if not api_key:
+    # 함수 호출 시점에 API 키 다시 확인 (Streamlit 환경에서 .env 로딩 타이밍 이슈 해결)
+    current_api_key = os.getenv("GEMINI_API_KEY")
+    if not current_api_key:
+        print("[오류] generate_sql: GEMINI_API_KEY가 환경 변수에 없습니다.")
+        return None
+    
+    # API 키가 있으면 다시 configure (혹시 모듈 로드 시점에 실패했을 경우 대비)
+    try:
+        genai.configure(api_key=current_api_key)
+    except Exception as e:
+        print(f"[오류] Gemini API 설정 실패: {e}")
         return None
 
     system_prompt = f"""
@@ -91,11 +102,13 @@ def generate_sql(user_query):
     [규칙]
     1. 오직 SQL 쿼리문만 출력하세요. (Markdown 코드 블록 없이)
     2. 읽기 전용(SELECT) 쿼리만 작성하세요. DELETE, UPDATE, DROP 금지.
-    3. 검색 결과에는 최소한 인플루언서 이름(name), 채널명(title), 구독자수(subscriber_count)가 포함되어야 합니다.
+    3. 검색 결과에는 반드시 다음 컬럼이 포함되어야 합니다: **인플루언서 ID(i.influencer_id), 이름(i.name), 채널ID(c.channel_id), 채널명(c.title AS channel_title), 구독자수(c.subscriber_count), 채널썸네일(c.thumbnail_url), 인스타그램ID(ig.ig_username).** LEFT JOIN을 사용하여 누락 없이 가져오세요.
     4. 결과를 보기 좋게 정렬(ORDER BY)하세요. (기본: 구독자순)
     5. LIMIT 20을 기본적으로 적용하세요.
     6. JOIN을 적절히 사용하여 필요한 정보를 조합하세요.
     7. 검색어 매칭은 LIKE '%keyword%' 패턴을 사용하세요.
+    8. DISTINCT 사용 금지! ORDER BY에 사용하는 컬럼이 SELECT에 없으면 오류가 발생합니다. 중복 제거가 필요하면 GROUP BY를 사용하세요.
+    9. 반드시 WHERE 절에 i.confidence_score > 50 조건을 포함하세요. 신뢰도 점수가 50점 이하인 인플루언서는 제외해야 합니다.
     
     사용자 요청: {user_query}
     """
@@ -105,7 +118,9 @@ def generate_sql(user_query):
         response = model.generate_content(system_prompt)
         return response.text
     except Exception as e:
-        print(f"[LLM 호출 오류] {e}")
+        print(f"[LLM 호출 오류] {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def main():
