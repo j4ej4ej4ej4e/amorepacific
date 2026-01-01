@@ -1,0 +1,23 @@
+[
+  {
+    "keyword": "허쉬컷 스타일링",
+    "is_hair_related": true,
+    "similarity": 0.78,
+    "note": "초기 데이터 (optimize_threshold.py에서)",
+    "timestamp": "2025-12-27T00:00:00"
+  },
+  {
+    "keyword": "레이어드컷 튜토리얼",
+    "is_hair_related": true,
+    "similarity": 0.75,
+    "note": "초기 데이터",
+    "timestamp": "2025-12-27T00:00:00"
+  },
+  {
+    "keyword": "메이크업 루틴",
+    "is_hair_related": false,
+    "similarity": 0.23,
+    "note": "초기 데이터",
+    "timestamp": "2025-12-27T00:00:00"
+  }
+]

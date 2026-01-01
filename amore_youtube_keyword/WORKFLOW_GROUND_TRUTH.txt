@@ -1,0 +1,285 @@
+# Ground Truth 점진적 확장 워크플로우
+
+## 🎯 목표
+44개 → 100개 → 200개로 점진적으로 Ground Truth를 확장하여  
+더 정확한 Threshold를 도출
+
+## 📅 4주 계획
+
+### Week 1: 초기 프로토타입 (✅ 완료)
+```bash
+# 1. 초기 44개로 최적화
+python optimize_threshold.py
+
+# 결과:
+# - Threshold: 0.52
+# - F1: 0.909
+# - ROC-AUC: 0.91
+```
+
+### Week 2: 첫 번째 확장 (44 → 94개)
+```bash
+# 1. 파이프라인 실행 (초기 threshold 사용)
+python main.py --depth 3 --limit 200
+
+# 2. 상위 50개 키워드 추출
+# output/keyword_tree_YYYYMMDD_keywords.txt 파일 생성됨
+
+# 3. 대화형 라벨링 (50개 중 일부)
+python expand_ground_truth.py \
+    --keywords output/keyword_tree_YYYYMMDD_keywords.txt \
+    --batch 25
+
+# 예상 소요: 10-15분
+
+# 4. 재최적화
+python expand_ground_truth.py --optimize
+
+# 예상 결과:
+# - 데이터: 69개 (44 + 25)
+# - Threshold: 0.51 ± 0.02
+# - F1: 0.912 ~ 0.918
+```
+
+### Week 3: 두 번째 확장 (94 → 144개)
+```bash
+# 1. 업데이트된 threshold로 재실행
+# hair_embedder.py 수정 후
+python main.py --depth 3 --limit 200
+
+# 2. 추가 50개 라벨링
+python expand_ground_truth.py \
+    --keywords output/keyword_tree_YYYYMMDD_keywords.txt \
+    --batch 50 \
+    --optimize
+
+# 예상 결과:
+# - 데이터: 144개
+# - Threshold: 0.52 (안정화)
+# - F1: 0.915 ~ 0.920
+```
+
+### Week 4: 검증 및 마무리
+```bash
+# 1. 최종 최적화
+python expand_ground_truth.py --optimize
+
+# 2. A/B 테스트
+# 기존 vs 새 threshold로 실제 인플루언서 품질 비교
+
+# 3. 공모전 자료 준비
+# - threshold_optimization_results.json
+# - 점진적 개선 그래프
+# - 최종 성능 리포트
+```
+
+---
+
+## 🛠️ 명령어 가이드
+
+### 1. 현재 상태 확인
+```bash
+python expand_ground_truth.py --stats
+```
+
+출력:
+```
+📊 Ground Truth 현황
+====================================
+  총: 44개
+  헤어 관련: 26개 (59%)
+  비관련: 18개
+====================================
+```
+
+### 2. 새 키워드 라벨링
+```bash
+python expand_ground_truth.py \
+    --keywords 키워드파일.txt \
+    --batch 20
+```
+
+대화형 라벨링:
+```
+[1/20] '허쉬컷 셀프'
+  💡 유사도: 0.783
+  🤖 AI 예측: ✅ 헤어 관련
+  
+  판단 (y/n/s/q/?): y
+  ✅ 헤어 관련으로 저장
+
+[2/20] '메이크업 브이로그'
+  💡 유사도: 0.234
+  🤖 AI 예측: ❌ 비관련
+  
+  판단 (y/n/s/q/?): n
+  ❌ 비관련으로 저장
+```
+
+### 3. 라벨링 후 즉시 최적화
+```bash
+python expand_ground_truth.py \
+    --keywords 키워드파일.txt \
+    --batch 30 \
+    --optimize
+```
+
+### 4. 최적화만 실행
+```bash
+python expand_ground_truth.py --optimize
+```
+
+---
+
+## 📊 진행 상황 추적
+
+### 진행률 표
+
+| 단계 | 데이터 수 | Threshold | F1 | 상태 |
+|------|----------|-----------|-----|------|
+| Week 1 | 44 | 0.520 | 0.909 | ✅ 완료 |
+| Week 2 | ~70 | 0.51? | 0.91? | ⏳ 진행 예정 |
+| Week 3 | ~120 | 0.52? | 0.92? | ⏳ 진행 예정 |
+| Week 4 | ~150 | 0.52 | 0.92 | ⏳ 진행 예정 |
+
+### 개선 추이 (예상)
+
+```
+F1-Score
+0.92 │                      ● (Week 4)
+     │                   ●
+0.91 │              ●  (Week 2-3)
+     │          ●
+0.90 │     ●  (Week 1)
+     │
+     └─────────────────────────────> 데이터 수
+      40   70   100  130  160
+```
+
+---
+
+## 💡 실전 팁
+
+### 라벨링 시 기준
+
+✅ **헤어 관련**
+- 스타일: 허쉬컷, 볼륨펌, 레이어드컷
+- 시술: 염색, 탈색, 펌, 매직
+- 제품: 샴푸, 트리트먼트, 헤어오일
+- 케어: 두피 케어, 손상모 관리
+- 상태: 볼륨감, 윤기, 찰랑
+
+❌ **비관련**
+- 메이크업: 립스틱, 파운데이션
+- 스킨케어: 수분 크림, 토너
+- 패션: 코디, 악세서리
+- 라이프: 일상, 브이로그
+
+⚠️ **애매한 경우**
+```
+"볼륨감" → 헤어 볼륨? 메이크업 볼륨?
+→ 유사도를 참고하되, 도메인 지식 활용
+→ 헤어가 더 일반적이면 y
+```
+
+### 효율적 라벨링
+
+1. **배치 크기**: 20-30개 (집중력 유지)
+2. **휴식**: 30개마다 5분 휴식
+3. **일관성**: 같은 날 라벨링 (기준 일관성)
+4. **메모**: 애매한 경우 note에 이유 기록
+
+---
+
+## 🎯 성공 기준
+
+### 데이터 품질
+- ✅ 최소 100개 이상
+- ✅ Positive:Negative = 5:5 ~ 6:4
+- ✅ 경계 사례 20% 포함
+
+### 성능 지표
+- ✅ ROC-AUC ≥ 0.90
+- ✅ F1-Score ≥ 0.90
+- ✅ Precision ≥ 85%
+- ✅ Recall ≥ 90%
+
+### 안정성
+- ✅ Threshold 변동 < 0.05
+- ✅ 연속 2회 최적화 결과 일치
+
+---
+
+## 🚨 문제 해결
+
+### "데이터가 부족합니다"
+```bash
+# 최소 20개 필요
+python expand_ground_truth.py --stats
+# → 현재 개수 확인 후 더 라벨링
+```
+
+### "파일 없음"
+```bash
+# main.py 실행하여 키워드 파일 생성
+python main.py --limit 100
+
+# 생성된 파일 경로 확인
+ls output/
+```
+
+### Threshold가 크게 변동
+```
+원인: 데이터 편향 or 샘플 부족
+해결: 
+1. 균형 잡힌 라벨링 (Positive:Negative)
+2. 경계 사례 추가
+3. 샘플 수 증가
+```
+
+---
+
+## 📁 파일 구조
+
+```
+amore_youtube_keyword/
+├── data/
+│   ├── ground_truth.json          # Ground Truth 데이터
+│   ├── optimization_result_*.json # 최적화 결과
+│   └── labeling_sessions/         # 세션별 백업
+│
+├── output/
+│   └── keyword_tree_*_keywords.txt # 생성된 키워드
+│
+├── expand_ground_truth.py         # 라벨링 도구 ⭐
+├── optimize_threshold.py          # 최적화 프레임워크
+└── README.md
+```
+
+---
+
+## ✅ 체크리스트
+
+### Week 2
+- [ ] 파이프라인 실행 (threshold=0.52)
+- [ ] 상위 100개 키워드 확인
+- [ ] 25개 라벨링 완료
+- [ ] 재최적화 실행
+- [ ] 새 threshold 적용
+
+### Week 3
+- [ ] 파이프라인 재실행 (업데이트된 threshold)
+- [ ] 50개 추가 라벨링
+- [ ] 재최적화 (총 ~120개)
+- [ ] Threshold 안정화 확인
+
+### Week 4
+- [ ] 최종 최적화
+- [ ] A/B 테스트
+- [ ] 개선 그래프 작성
+- [ ] 공모전 발표 자료 준비
+
+---
+
+**작성**: 2025-12-29
+**업데이트**: 진행하면서 계속 업데이트

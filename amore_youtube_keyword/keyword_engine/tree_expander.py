@@ -5,11 +5,13 @@ BFS 방식으로 Seed 키워드에서 시작하여 관련 키워드를 확장해
 from dataclasses import dataclass, field
 from typing import List, Dict, Set, Optional, Tuple
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 import json
 import os
 from datetime import datetime
 
-from .seed_keywords import SeedKeywordGenerator, DEFAULT_SEED_KEYWORDS
+from .seed_keywords import DEFAULT_SEED_KEYWORDS
 from .youtube_searcher import YouTubeSearcher, VideoMeta
 from .keyword_miner import KeywordMiner, ExtractedKeyword
 from .query_scorer import QueryScorer, QueryScore
@@ -64,11 +66,12 @@ class KeywordTreeExpander:
                  searcher: YouTubeSearcher = None,
                  miner: KeywordMiner = None,
                  scorer: QueryScorer = None,
-                 max_depth: int = 5,
+                 max_depth: int = 3,
                  top_k_per_level: int = 10,
                  videos_per_search: int = 20,
                  detail_videos: int = 5,
-                 quiet: bool = False):
+                 quiet: bool = False,
+                 parallel_workers: int = 1):
         """
         Args:
             searcher: YouTube 검색기
@@ -79,6 +82,7 @@ class KeywordTreeExpander:
             videos_per_search: 검색당 영상 수
             detail_videos: 상세 정보 수집할 영상 수
             quiet: 출력 억제 여부
+            parallel_workers: 병렬 확장 작업자 수 (1이면 직렬)
         """
         self.searcher = searcher or YouTubeSearcher(quiet=quiet)
         self.miner = miner or KeywordMiner()
@@ -89,12 +93,14 @@ class KeywordTreeExpander:
         self.videos_per_search = videos_per_search
         self.detail_videos = detail_videos
         self.quiet = quiet
+        self.parallel_workers = max(1, parallel_workers)
         
         # 상태
         self.tree_roots: List[KeywordTreeNode] = []
         self.all_keywords: Dict[str, RankedKeyword] = {}
         self.processed_queries: Set[str] = set()
         self.expansion_history: List[Dict] = []
+        self._lock = Lock()
     
     def expand(self, seed_keywords: List[str] = None) -> 'KeywordTreeExpander':
         """
@@ -115,57 +121,56 @@ class KeywordTreeExpander:
             print(f"  시드 키워드: {len(seed_keywords)}개")
             print(f"  최대 깊이: {self.max_depth}")
             print(f"  레벨당 확장: {self.top_k_per_level}개")
+            print(f"  병렬 작업자: {self.parallel_workers}개")
             print("=" * 60)
         
-        # BFS 큐: (키워드, 깊이, 부모)
-        queue = deque()
+        # 초기 큐: (키워드, 부모)
+        queue: List[Tuple[str, Optional[str]]] = []
         for kw in seed_keywords:
-            queue.append((kw, 0, None))
+            queue.append((kw, None))
             self.all_keywords[kw] = RankedKeyword(
                 keyword=kw, score=1.0, depth=0, parent_keyword=None
             )
         
-        current_depth = 0
-        level_keywords = []
-        
-        while queue:
-            keyword, depth, parent = queue.popleft()
+        for depth in range(self.max_depth):
+            if not queue:
+                break
             
-            # 깊이 변경 시 레벨 요약
-            if depth > current_depth:
-                self._log_level_summary(current_depth, level_keywords)
-                current_depth = depth
-                level_keywords = []
+            if not self.quiet:
+                print(f"\n[깊이 {depth}] 처리 키워드: {len(queue)}개")
             
-            # 최대 깊이 도달 시 중단
-            if depth >= self.max_depth:
-                continue
+            level_keywords = []
+            next_queue: List[Tuple[str, Optional[str]]] = []
             
-            # 이미 처리된 키워드 스킵
-            if keyword in self.processed_queries:
-                continue
+            # 병렬/직렬 처리 선택
+            if self.parallel_workers > 1 and len(queue) > 1:
+                with ThreadPoolExecutor(max_workers=self.parallel_workers) as executor:
+                    futures = {
+                        executor.submit(self._expand_keyword, kw, depth): kw
+                        for kw, _ in queue
+                        if kw not in self.processed_queries
+                    }
+                    for future in as_completed(futures):
+                        keyword = futures[future]
+                        try:
+                            new_keywords = future.result()
+                        except Exception as e:
+                            print(f"[오류] '{keyword}' 확장 실패: {e}")
+                            continue
+                        self.processed_queries.add(keyword)
+                        level_keywords.append(keyword)
+                        self._collect_new_keywords(new_keywords, next_queue)
+            else:
+                for keyword, _parent in queue:
+                    if keyword in self.processed_queries:
+                        continue
+                    new_keywords = self._expand_keyword(keyword, depth)
+                    self.processed_queries.add(keyword)
+                    level_keywords.append(keyword)
+                    self._collect_new_keywords(new_keywords, next_queue)
             
-            # 키워드 확장
-            new_keywords = self._expand_keyword(keyword, depth)
-            self.processed_queries.add(keyword)
-            level_keywords.append(keyword)
-            
-            # 새 키워드를 큐에 추가
-            for new_kw in new_keywords[:self.top_k_per_level]:
-                if new_kw.keyword not in self.processed_queries:
-                    queue.append((new_kw.keyword, depth + 1, keyword))
-                    
-                    # all_keywords 업데이트
-                    if new_kw.keyword not in self.all_keywords:
-                        self.all_keywords[new_kw.keyword] = new_kw
-                    else:
-                        # 더 높은 점수로 업데이트
-                        existing = self.all_keywords[new_kw.keyword]
-                        if new_kw.score > existing.score:
-                            self.all_keywords[new_kw.keyword] = new_kw
-        
-        # 마지막 레벨 요약
-        self._log_level_summary(current_depth, level_keywords)
+            self._log_level_summary(depth, level_keywords)
+            queue = next_queue
         
         if not self.quiet:
             print("\n" + "=" * 60)
@@ -246,19 +251,35 @@ class KeywordTreeExpander:
         ranked.sort(key=lambda x: x.score, reverse=True)
         
         # 확장 기록 저장
-        self.expansion_history.append({
-            'keyword': keyword,
-            'depth': depth,
-            'video_count': len(videos),
-            'query_score': query_score.total_score,
-            'mined_count': len(mined),
-            'new_keywords': [r.keyword for r in ranked[:self.top_k_per_level]]
-        })
+        with self._lock:
+            self.expansion_history.append({
+                'keyword': keyword,
+                'depth': depth,
+                'video_count': len(videos),
+                'query_score': query_score.total_score,
+                'mined_count': len(mined),
+                'new_keywords': [r.keyword for r in ranked[:self.top_k_per_level]]
+            })
         
         if not self.quiet and ranked:
             print(f"  ✨ 상위 키워드: {', '.join([r.keyword for r in ranked[:5]])}")
         
         return ranked
+    
+    def _collect_new_keywords(self, new_keywords: List[RankedKeyword],
+                              next_queue: List[Tuple[str, Optional[str]]]):
+        """새 키워드를 all_keywords/큐에 안전하게 반영"""
+        for new_kw in new_keywords[:self.top_k_per_level]:
+            if new_kw.keyword in self.processed_queries:
+                continue
+            
+            with self._lock:
+                existing = self.all_keywords.get(new_kw.keyword)
+                if existing is None or new_kw.score > existing.score:
+                    self.all_keywords[new_kw.keyword] = new_kw
+            
+            if not any(k == new_kw.keyword for k, _ in next_queue):
+                next_queue.append((new_kw.keyword, new_kw.parent_keyword))
     
     def _log_level_summary(self, depth: int, keywords: List[str]):
         """레벨 완료 요약"""

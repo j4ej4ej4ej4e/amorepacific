@@ -4,3 +4,5 @@ JPype1>=1.4.0
 tqdm>=4.65.0
 sentence-transformers>=2.2.0
 scikit-learn>=1.0.0
+kiwipiepy>=0.20.0
+soynlp>=0.0.493

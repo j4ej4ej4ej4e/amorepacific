@@ -15,6 +15,13 @@ except ImportError:
     print("[경고] sentence-transformers가 설치되지 않았습니다.")
     print("       pip install sentence-transformers 실행 필요.")
 
+# Torch (GPU 확인용)
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
 
 class HairRelevanceChecker:
     """
@@ -54,18 +61,21 @@ class HairRelevanceChecker:
     
     def __init__(self, 
                  model_name: str = 'jhgan/ko-sbert-nli',
-                 threshold: float = 0.35,
-                 use_fallback: bool = True):
+                 threshold: float = 0.52,
+                 use_fallback: bool = True,
+                 device: Optional[str] = None):
         """
         Args:
             model_name: 사용할 SBERT 모델 (기본: 한국어 SBERT)
             threshold: 헤어 관련 판단 임계값 (0~1)
             use_fallback: 모델 로드 실패 시 키워드 매칭으로 대체
+            device: 'cuda', 'cpu' 등 (None이면 자동 감지)
         """
         self.threshold = threshold
         self.use_fallback = use_fallback
         self.model = None
         self.hair_embedding = None
+        self.device = device
         
         # 폴백용 키워드 셋
         self._fallback_keywords = {
@@ -76,8 +86,13 @@ class HairRelevanceChecker:
         
         if SBERT_AVAILABLE:
             try:
-                print(f"[임베딩] 모델 로딩 중: {model_name}")
-                self.model = SentenceTransformer(model_name)
+                if not self.device:
+                    if TORCH_AVAILABLE and torch.cuda.is_available():
+                        self.device = "cuda"
+                    else:
+                        self.device = "cpu"
+                print(f"[임베딩] 모델 로딩 중: {model_name} (device={self.device})")
+                self.model = SentenceTransformer(model_name, device=self.device)
                 self._init_hair_embedding()
                 print(f"[임베딩] ✅ 모델 로드 완료!")
             except Exception as e:
@@ -112,7 +127,7 @@ class HairRelevanceChecker:
         
         try:
             # 텍스트 임베딩
-            text_embedding = self.model.encode(text)
+            text_embedding = self.model.encode(text, device=self.device if self.device else None)
             
             # 정규화
             text_embedding = text_embedding / np.linalg.norm(text_embedding)
