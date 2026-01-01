@@ -10,5 +10,4 @@ __pycache__/
 .vscode/
 .idea/
 
-amore_youtube_keyword/output/*
 amore_youtube_keyword/*.md

@@ -17,10 +17,12 @@ print("🎯 전체 DB 분석 키워드 추출")
 print("=" * 80)
 
 # 설정
-THRESHOLD = 0.35  # SBERT 헤어 관련도 임계값 (조절 가능!)
+THRESHOLD = 0.50  # SBERT 헤어 관련도 임계값 (조절 가능!)
+MIN_SIMILARITY = 0.50  # JSON 저장용 최소 유사도
 
 print(f"\n⚙️  설정:")
 print(f"   - SBERT Threshold: {THRESHOLD}")
+print(f"   - 최소 유사도: {MIN_SIMILARITY}")
 print(f"   - 데이터: TiDB 전체 영상\n")
 
 start_time = time.time()
@@ -51,9 +53,9 @@ for video in tqdm(videos, desc="텍스트 추출", unit="영상"):
 
 print(f"✅ {len(texts)}개 텍스트 추출 완료")
 
-# 3. 키워드 추출 (SBERT 필터링 포함)
+# 3. 키워드 추출 (ALL keywords, no top_k limit)
 print("\n" + "=" * 80)
-print("3️⃣ 키워드 추출 (SBERT 헤어 관련도 필터링)")
+print("3️⃣ 키워드 추출 (전체)")
 print("=" * 80)
 
 miner = KeywordMiner(
@@ -61,40 +63,62 @@ miner = KeywordMiner(
     embedding_threshold=THRESHOLD  # 여기서 threshold 조절!
 )
 
-# 헤어 관련 키워드만 추출
-print("키워드 마이닝 중... (SBERT 연산 포함, 시간이 걸릴 수 있습니다)")
-keywords = miner.extract_hair_keywords(texts, top_k=200)
+# 모든 키워드 추출 (빈도 제한 없음)
+print("키워드 마이닝 중... (형태소 분석 + N-gram 추출)")
+all_keywords_dict = miner.extract_from_texts(texts)
 
-print(f"\n✅ {len(keywords)}개 키워드 추출 완료")
+# dict -> list 변환
+all_keywords = list(all_keywords_dict.values())
+print(f"✅ 전체 {len(all_keywords)}개 키워드 추출 완료")
+
+# 헤어 관련 키워드만 필터링 (SBERT는 이미 extract_from_texts 내부에서 실행됨)
+hair_keywords = [kw for kw in all_keywords if kw.is_hair_related]
+print(f"✅ 헤어 관련 키워드: {len(hair_keywords)}개 (SBERT threshold {THRESHOLD})")
 
 # 4. 결과 정리 및 저장
 print("\n" + "=" * 80)
-print("4️⃣ 결과 저장")
+print("4️⃣ 유사도 재계산 & 필터링")
 print("=" * 80)
 
 # JSON 구조
 result = {
     'metadata': {
         'total_videos': len(videos),
-        'total_keywords': len(keywords),
+        'total_keywords': 0,  # 나중에 업데이트
         'sbert_threshold': THRESHOLD,
+        'min_similarity': MIN_SIMILARITY,
         'generated_at': datetime.now().isoformat(),
     },
     'keywords': []
 }
 
-# 키워드 상세 정보
-for kw in tqdm(keywords, desc="유사도 계산", unit="키워드"):
+# 키워드 상세 정보 (유사도 필터링 포함)
+filtered_keywords = []
+for kw in tqdm(hair_keywords, desc="유사도 재계산 & 필터링", unit="키워드"):
     # 유사도 계산
     similarity = miner.get_hair_similarity(kw.keyword) if miner.hair_checker else 0.0
     
-    result['keywords'].append({
+    # 최소 유사도 미달 시 제외
+    if similarity < MIN_SIMILARITY:
+        continue
+    
+    filtered_keywords.append({
         'keyword': kw.keyword,
         'frequency': kw.frequency,
         'source_count': kw.source_count,
         'is_hair_related': kw.is_hair_related,
         'hair_similarity': round(similarity, 4),
     })
+
+# 유사도 순으로 정렬
+filtered_keywords.sort(key=lambda x: x['hair_similarity'], reverse=True)
+
+# 메타데이터 업데이트
+result['metadata']['total_keywords'] = len(filtered_keywords)
+result['metadata']['min_similarity'] = MIN_SIMILARITY
+result['keywords'] = filtered_keywords
+
+print(f"\n✅ 필터링 완료: {len(hair_keywords)}개 → {len(filtered_keywords)}개 (유사도 {MIN_SIMILARITY} 이상)")
 
 # JSON 저장
 output_path = "output/extracted_keywords.json"
