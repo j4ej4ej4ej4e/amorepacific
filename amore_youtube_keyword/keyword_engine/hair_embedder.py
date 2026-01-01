@@ -43,9 +43,6 @@ class HairRelevanceChecker:
         "펌 염색 커트 드라이 스타일",
         "샴푸 트리트먼트 두피케어 헤어케어",
         
-        # 미용실/전문가
-        "미용실 헤어샵 살롱 디자이너 원장",
-        
         # 시술
         "펌 염색 탈색 클리닉 매직 셋팅",
         "레이어드컷 허쉬컷 볼륨펌 다운펌",
@@ -81,9 +78,19 @@ class HairRelevanceChecker:
         self._fallback_keywords = {
             "헤어", "머리", "두피", "모발", "펌", "염색", "커트", "컷",
             "스타일링", "드라이", "샴푸", "트리트먼트", "린스", "에센스",
-            "미용", "미용실", "살롱", "탈모", "손상", "볼륨",
+            "볼륨", "웨이브", "허쉬컷", "레이어드", "탈모", "손상모"
         }
         
+        # GPU/CPU 자동 감지
+        import torch
+        if torch.cuda.is_available():
+            self.device = 'cuda'
+            print(f"[SBERT] 🚀 GPU 감지! CUDA 사용 (GPU: {torch.cuda.get_device_name(0)})")
+        else:
+            self.device = 'cpu'
+            print(f"[SBERT] 💻 CPU 모드 (GPU 없음)")
+        
+        # 모델 로드
         if SBERT_AVAILABLE:
             try:
                 if not self.device:
@@ -94,11 +101,12 @@ class HairRelevanceChecker:
                 print(f"[임베딩] 모델 로딩 중: {model_name} (device={self.device})")
                 self.model = SentenceTransformer(model_name, device=self.device)
                 self._init_hair_embedding()
-                print(f"[임베딩] ✅ 모델 로드 완료!")
+                
             except Exception as e:
-                print(f"[임베딩] ⚠️ 모델 로드 실패: {e}")
+                print(f"[SBERT] ⚠️ 모델 로드 실패: {e}")
                 if not use_fallback:
                     raise
+                print(f"[SBERT] 키워드 매칭 모드로 전환")
     
     def _init_hair_embedding(self):
         """헤어 개념의 대표 임베딩 벡터 생성"""

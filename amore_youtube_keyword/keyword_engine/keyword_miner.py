@@ -57,8 +57,6 @@ HAIR_DOMAIN_KEYWORDS = {
     "스프레이", "무스", "세럼", "앰플", "팩",
     # 도구
     "고데기", "드라이기", "헤어롤", "빗", "브러쉬",
-    # 전문용어
-    "미용", "미용실", "헤어샵", "살롱", "디자이너", "원장",
     # 상태/문제
     "탈모", "손상", "푸석", "건조", "지성", "민감", "각질",
 }
@@ -211,17 +209,16 @@ class KeywordMiner:
             {키워드: ExtractedKeyword} 딕셔너리
         """
         all_ngrams = Counter()
-        source_counts = Counter()
-        soynlp_candidates: List[str] = []
-
-        # soynlp로 신조어 후보 선반영 (선택 사항)
-        if self.use_soynlp_candidates and SOYNLP_AVAILABLE:
-            soynlp_candidates = self._extract_soynlp_candidates(texts)
-            for cand in soynlp_candidates:
-                all_ngrams[cand] += 1
-                source_counts[cand] += 1
+        source_counts = Counter()  # 각 키워드가 몇 개 소스에서 나왔는지
         
-        for text in texts:
+        # tqdm 임포트 (선택적)
+        try:
+            from tqdm import tqdm
+            texts_iter = tqdm(texts, desc="키워드 마이닝", unit="텍스트")
+        except ImportError:
+            texts_iter = texts
+        
+        for text in texts_iter:
             if not text:
                 continue
             
@@ -242,13 +239,21 @@ class KeywordMiner:
             for ngram in set(text_ngrams):
                 source_counts[ngram] += 1
         
-        # 3. 결과 구성
+        # 4. 결과 구성 (헤어 관련성 판단 - SBERT 연산 포함, 시간 소요)
         results = {}
-        for ngram, freq in all_ngrams.items():
+        
+        # tqdm으로 진행도 표시
+        try:
+            from tqdm import tqdm
+            ngrams_iter = tqdm(all_ngrams.items(), desc="헤어 관련성 판단 (SBERT)", unit="키워드")
+        except ImportError:
+            ngrams_iter = all_ngrams.items()
+        
+        for ngram, freq in ngrams_iter:
             if freq < self.min_frequency:
                 continue
             
-            is_hair = self._is_hair_related(ngram)
+            is_hair = self._is_hair_related(ngram)  # ← SBERT 연산, 느림!
             
             results[ngram] = ExtractedKeyword(
                 keyword=ngram,

@@ -1,11 +1,8 @@
 # 동적 키워드 추출 엔진
-from .seed_keywords import DEFAULT_SEED_KEYWORDS
-from .youtube_searcher import YouTubeSearcher, VideoMeta
+from .db_video_loader import DBVideoLoader
 from .keyword_miner import KeywordMiner
-from .query_scorer import QueryScorer, QueryScore
-from .tree_expander import KeywordTreeExpander, RankedKeyword
 
-# 임베딩 기반 헤어 판단 (선택적)
+# 임베딩 기반 헤어 판단
 try:
     from .hair_embedder import HairRelevanceChecker, get_hair_checker
 except ImportError:
@@ -13,14 +10,8 @@ except ImportError:
     get_hair_checker = None
 
 __all__ = [
-    'YouTubeSearcher',
+    'DBVideoLoader',
     'KeywordMiner',
-    'QueryScorer',
-    'KeywordTreeExpander',
-    'VideoMeta',
-    'QueryScore',
-    'RankedKeyword',
-    'DEFAULT_SEED_KEYWORDS',
     'HairRelevanceChecker',
     'get_hair_checker',
 ]
