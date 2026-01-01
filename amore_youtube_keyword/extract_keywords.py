@@ -3,6 +3,7 @@
 DB 전체 영상 → SBERT 필터링 → 키워드 추출 → JSON 저장
 """
 import sys
+import os
 import time
 import json
 from datetime import datetime
@@ -97,6 +98,7 @@ for kw in tqdm(keywords, desc="유사도 계산", unit="키워드"):
 
 # JSON 저장
 output_path = "output/extracted_keywords.json"
+os.makedirs(os.path.dirname(output_path), exist_ok=True)  # 폴더 자동 생성
 with open(output_path, 'w', encoding='utf-8') as f:
     json.dump(result, f, ensure_ascii=False, indent=2)
 
